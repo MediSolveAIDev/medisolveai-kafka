@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "medisolveai-kafka": {
+      "command": "uv",
+      "args": ["run", "--directory", "../..", "medisolveai-kafka-mcp"]
+    }
+  }
+}
