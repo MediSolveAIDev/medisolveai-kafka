@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+      - name: Calculate version
+        id: version
+        run: |
+          # 마지막 태그 찾기 (없으면 첫 커밋부터)
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --oneline --format="%s")
+            CURRENT="0.0.0"
+          else
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --oneline --format="%s")
+            CURRENT="${LAST_TAG#v}"
+          fi
+
+          # prefix 스캔
+          HAS_VERSION=$(echo "$COMMITS" | grep -c "^version:" || true)
+          HAS_FEAT=$(echo "$COMMITS" | grep -c "^feat:" || true)
+          HAS_FIX=$(echo "$COMMITS" | grep -c "^fix:" || true)
+
+          # 현재 버전 파싱
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+
+          # 버전 계산 (우선순위: version > feat > fix)
+          if [ "$HAS_VERSION" -gt 0 ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$HAS_FEAT" -gt 0 ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [ "$HAS_FIX" -gt 0 ]; then
+            PATCH=$((PATCH + 1))
+          else
+            echo "버전 변경 대상 커밋이 없습니다 (version:/feat:/fix: prefix 필요)"
+            exit 1
+          fi
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "계산된 버전: v${NEW_VERSION}"
+
+      - name: Update pyproject.toml version
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.version.outputs.new_version }}\"/" pyproject.toml
+          cat pyproject.toml | grep "^version"
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Commit version bump & create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }}"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        run: |
+          # 릴리즈 노트 생성
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            NOTES=$(git log --oneline --format="- %s")
+          else
+            NOTES=$(git log "${LAST_TAG}..HEAD^" --oneline --format="- %s")
+          fi
+
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes "$NOTES" \
+            dist/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
