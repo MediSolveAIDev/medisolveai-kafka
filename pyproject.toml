@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medisolveai-kafka"
+version = "1.0.0"
+description = "사내 서비스 Kafka 공통 라이브러리 + MCP 서버"
+requires-python = ">=3.11"
+dependencies = [
+    "aiokafka",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+]
+mcp = [
+    "mcp",
+]
+
+[project.scripts]
+medisolveai-kafka-mcp = "medisolveai_kafka.mcp.server:mcp.run"
